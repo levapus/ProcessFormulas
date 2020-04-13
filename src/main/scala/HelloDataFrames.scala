@@ -60,9 +60,4 @@ object HelloDataFrames extends App {
 
   val foundDF2 = g.find("(a)-[]->(b)")
   foundDF2.show()
-
-  val foundDF3 = g.find("(a)-[*3]->(b)")
-  foundDF3.show()
-
-
 }
