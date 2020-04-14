@@ -2,13 +2,14 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.graphframes._
-import org.graphframes.lib.AggregateMessages
+import org.graphframes.lib.{AggregateMessages, Pregel}
 
 object ProcessFormulas extends App {
   val sparkSession = SparkSession.builder()
       .master("local[*]")
       .appName("HelloGraphFrames")
       .getOrCreate()
+  sparkSession.sparkContext.setCheckpointDir("/tmp/graphx-checkpoint")
   sparkSession.sparkContext.setLogLevel("ERROR")
 
   val sqlContext = sparkSession.sqlContext
@@ -98,5 +99,15 @@ object ProcessFormulas extends App {
   agg.show()
 
 
+  val numVertices = g.vertices.count()
+  val alpha = 0.15
+  val ranks = g.pregel
+    .withVertexColumn("rank", lit(1.0 / numVertices),
+      coalesce(Pregel.msg, lit(0.0)) * (1.0 - alpha) + alpha / numVertices)
+    .sendMsgToDst(Pregel.src("rank") / Pregel.src("value"))
+    .aggMsgs(sum(Pregel.msg))
+    .run()
+
+  ranks.show()
 
 }
