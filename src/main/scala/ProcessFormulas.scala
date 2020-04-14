@@ -13,64 +13,75 @@ object ProcessFormulas extends App {
 
   val sqlContext = sparkSession.sqlContext
 
+  //building the graph
+  // Create a Vertex DataFrame with unique ID column "id"
+  val v = sqlContext.createDataFrame(List(
+    ("r00t", "root", "", 0),
+    ("b", "formula B", "", 1),
+    ("c", "formula C", "", 2),
+    ("d", "formula D", "", 3),
+    ("e", "formula E", "", 4),
+    ("f", "formula F", "", 5),
+    ("g", "formula G", "", 6),
+    ("h", "formula H", "", 7),
+    ("i", "formula I", "", 8),
+    ("j", "formula J", "", 9),
+    ("k", "formula K", "", 10),
+    ("l", "formula L", "", 11),
+    ("m", "formula M", "", 12),
+    ("n", "formula N", "", 13),
+    ("o", "formula O", "", 14),
+    ("p", "formula P", "", 15),
+    ("q", "formula Q", "", 16),
+    ("r", "formula R", "", 17)
+  )).toDF("id", "name", "formula", "value")
 
-  val g: GraphFrame = examples.Graphs.friends
+  // Create an Edge DataFrame with "src" and "dst" columns
+  val e = sqlContext.createDataFrame(List(
+    ("r00t", "b"),
+    ("r00t", "c"),
+    ("r00t", "d"),
+    ("b", "e"),
+    ("b", "f"),
+    ("b", "g"),
+    ("c", "f"),
+    ("c", "i"),
+    ("c", "l"),
+    ("d", "i"),
+    ("d", "i"),
+    ("d", "m"),
+    ("d", "n"),
+    ("d", "o"),
+    ("e", "q"),
+    ("f", "h"),
+    ("f", "j"),
+    ("g", "h"),
+    ("i", "j"),
+    ("i", "k"),
+    ("i", "l"),
+    ("m", "o"),
+    ("m", "p"),
+    ("n", "o"),
+    ("k", "r"),
+    ("r", "d"),
+  )).toDF("src", "dst")
+
+  // Create a GraphFrame
+  val g = GraphFrame(v, e)
 
   //Display the vertex and edge DataFrames
   g.vertices.show()
   g.edges.show()
 
-  // Get a DataFrame with columns "id" and "inDeg" (in-degree)
-  val vertexInDegrees: DataFrame = g.inDegrees
-
-  // Find the youngest user's age in the graph.
-  // This queries the vertex DataFrame.
-  g.vertices.groupBy().min("age").show()
-
-  // Count the number of "follows" in the graph.
-  // This queries the edge DataFrame.
-  val numFollows = g.edges.filter("relationship = 'follow'").count()
-
-  println("Number of followers: " + numFollows)
 
   // Search for pairs of vertices with edges in both directions between them.
-  val motifs = g.find("(a)-[e]->(b); (b)-[e2]->(a)")
+  val motifs = g.find("(a)-[e]->(b)")
   motifs.show()
-
-  // More complex queries can be expressed by applying filters.
-  motifs.filter("b.age > 30").show()
-
-  // Find chains of 4 vertices.
-  val chain4 = g.find("(a)-[ab]->(b); (b)-[bc]->(c); (c)-[cd]->(d)")
-
-  // Query on sequence, with state (cnt)
-  //  (a) Define method for updating state given the next element of the motif.
-  def sumFriends(cnt: Column, relationship: Column): Column = {
-    when(relationship === "friend", cnt + 1).otherwise(cnt)
-  }
-  //  (b) Use sequence operation to apply method to sequence of elements in motif.
-  //      In this case, the elements are the 3 edges.
-  val condition = { Seq("ab", "bc", "cd")
-    .foldLeft(lit(0))((cnt, e) => sumFriends(cnt, col(e)("relationship"))) }
-  //  (c) Apply filter to DataFrame.
-  val chainWith2Friends2 = chain4.where(condition >= 2)
-  chainWith2Friends2.show()
 
   println("BFS ------------------------------------------")
   // Search from "Esther" for users of age < 32.
-  val paths = g.bfs.fromExpr("name = 'Esther'").toExpr("age < 32").run()
+  val paths = g.bfs.fromExpr("id = 'r00t'").toExpr("id = 'r'").run()
   paths.show()
-
-  // Specify edge filters or max path lengths.
-  {
-//    g.bfs.fromExpr("name = 'Esther'").toExpr("age < 32")
-    val res = g.bfs.fromExpr("name = 'Alice'").toExpr("age > 0")
-//    .edgeFilter("relationship != 'friend'")
-//    .maxPathLength(3)
-    .run()
-
-    res.show()
-  }
 
   println("Message passing via AggregateMessages -------------------------------------------------------")
 
@@ -78,12 +89,12 @@ object ProcessFormulas extends App {
   val AM = AggregateMessages
 
   // For each user, sum the ages of the adjacent users.
-  val msgToSrc = AM.dst("age")
-  val msgToDst = AM.src("age")
+//  val msgToSrc = AM.dst("age")
+  val msgToDst = AM.src("value")
   val agg = { g.aggregateMessages
-    .sendToSrc(msgToSrc)  // send destination user's age to source
+//    .sendToSrc(msgToSrc)  // send destination user's age to source
     .sendToDst(msgToDst)  // send source user's age to destination
-    .agg(sum(AM.msg).as("summedAges")) } // sum up ages, stored in AM.msg column
+    .agg(sum(AM.msg).as("summedValues")) } // sum up ages, stored in AM.msg column
   agg.show()
 
 
