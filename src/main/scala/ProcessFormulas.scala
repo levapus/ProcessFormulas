@@ -1,7 +1,6 @@
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.functions._
-
 import org.graphframes._
 import org.graphframes.lib.{AggregateMessages, Pregel}
 import org.apache.spark.graphx.{EdgeDirection, EdgeTriplet, VertexId}
@@ -12,13 +11,15 @@ object ProcessFormulas extends App {
       .master("local[*]")
       .appName("HelloGraphFrames")
       .getOrCreate()
-  sparkSession.sparkContext.setCheckpointDir("/tmp/graphx-checkpoint")
-  sparkSession.sparkContext.setLogLevel("ERROR")
+
+  val sparkContext = sparkSession.sparkContext
+  sparkContext.setCheckpointDir("/tmp/graphx-checkpoint")
+  sparkContext.setLogLevel("ERROR")
 
   val sqlContext = sparkSession.sqlContext
 
-  //building the graph
-  // Create a Vertex DataFrame with unique ID column "id"
+  //Building the graph
+  //create a Vertex DataFrame with unique ID column "id"
   val verticesDF = sqlContext.createDataFrame(List(
     ("r00t", "root", "", 0),
     ("b", "formula B", "", 1),
@@ -46,7 +47,7 @@ object ProcessFormulas extends App {
     .withColumn("iscyclic", lit(null))
     .withColumn("isleaf", lit(null))
 
-  // Create an Edge DataFrame with "src" and "dst" columns
+  //create an Edge DataFrame with "src" and "dst" columns
   val edgesDF = sqlContext.createDataFrame(List(
     ("r00t", "b"),
     ("r00t", "c"),
@@ -60,7 +61,9 @@ object ProcessFormulas extends App {
     ("d", "i"),
     ("d", "m"),
     ("d", "n"),
+    ("d", "o"),
     ("e", "q"),
+    ("q", "c"),
     ("f", "h"),
     ("f", "j"),
     ("g", "h"),
@@ -71,26 +74,29 @@ object ProcessFormulas extends App {
     ("m", "p"),
     ("n", "o"),
     ("k", "r"),
-    ("r", "d"),
+    ("r", "d"), //creates a cycle
+    ("h", "h"), //creates a self-cycle
+    ("g", "g"), //creates a self-cycle
+    //("j", "b"), //creates a big cycle
+    ("o", "m"), //creates a big cycle
   )).toDF("src", "dst")
 
-  // Create a GraphFrame
+  //create a graph
   val g = GraphFrame(verticesDF, edgesDF)
 
-  //Display the vertex and edge DataFrames
-  println("=== Vertices: ===========================================================")
+  //display the vertex and edge DataFrames
+  println("=== Built graph =========================================================")
+  println("Graph (vertices, edges):");
   g.vertices.show(100)
-
-  println("=== Edges: ==============================================================")
   g.edges.show(100)
 
-  //  Select subgraph for a given root
-//  val newRoot = "d"
-  val newRoot = "r00t"
+  //Select subgraph for a given root
+  val newRoot = "d"
+  //val newRoot = "r00t"
   println(s"=== Select subgraph with root ($newRoot) ===============================")
 
   /**
-   * Calculate subgraph based on new root vertex
+   * Calculate subgraph based on new root vertex.
    *
    * @param graph
    * @param newRoot
@@ -100,10 +106,10 @@ object ProcessFormulas extends App {
     val vertices = g.vertices.select("id").collect.map(r => r.getString(0)).toList
     val shortestPathsDF = graph.shortestPaths.landmarks(vertices).run()
       .select("id", "distances")
-        .where(s"id = '$newRoot'")
+      .where(s"id = '$newRoot'")
 
     //debug info
-    shortestPathsDF.show(false)
+    //shortestPathsDF.show(false)
 
     val newVertices = shortestPathsDF.first().getMap(1).keySet
 
@@ -111,12 +117,82 @@ object ProcessFormulas extends App {
   }
 
   val subgr = subgraph(g, newRoot)
-  println("Subgraph Vertices: ")
+  println("Subgraph (vertices, edges): ")
   subgr.vertices.show(100)
-
-  println("Subgraph Edges: ")
   subgr.edges.show(100)
 
+  //Cycle detection
+  println(s"=== Cycle detection ====================================================")
+
+  /**
+   * Detect cycles graphs.
+   *
+   * @param graph
+   * @return
+   */
+  def detectCycles(graph: GraphFrame) = {
+    val vertices = graph.vertices.select("id").collect.map(r => r.getString(0)).toList
+    val shortestPathsDF = graph.shortestPaths.landmarks(vertices).run()
+      .select("id", "distances")
+
+    //debug info
+    //shortestPathsDF.show(false)
+
+    //map of nodes with distances: {fromNode -> map(toNode -> distance)}
+    val shortestPathsMap = shortestPathsDF.collect().map(r => (r.getString(0), r.getMap[String, Int](1))).toMap
+    //println(shortestPathsMap)
+
+    import scala.collection.mutable
+    def nextCycle(fromNode: String) = {
+      val cycleNodes: mutable.Set[String] = mutable.Set[String]()
+      if(shortestPathsMap.isDefinedAt(fromNode)) {
+        val toNodes = shortestPathsMap(fromNode).filter(e => e._2 > 0).keySet
+        toNodes.foreach(toNode => {
+          if (shortestPathsMap(toNode).filter(e => e._2 > 0).keySet.contains(fromNode)) cycleNodes += (fromNode, toNode)
+        })
+        Some(cycleNodes.toSet)
+      } else None
+    }
+
+    val cycles: mutable.Set[Set[String]] = mutable.Set[Set[String]]()
+    shortestPathsMap.keySet.foreach(node => {
+      val cyclicNodes = nextCycle(node).get
+      if(cyclicNodes.nonEmpty) {
+        cycles.add(cyclicNodes)
+      }
+    })
+    //debug info
+    //println("cycles: " + cycles)
+
+    //last piece: detect self-cycles from a node to itself (above algorithm is based on shortest paths and as a result distance from a node to itself is 0,
+    // regardless of the fact if it has a cycle to itself or not)
+    val selfCycles: Set[String] = graph.find("(v)-[]->(v)").select("v").select("v.id").collect().map(r => r.getString(0)).toSet
+    //debug info
+    //println("self-cycles: " + selfCycles)
+
+    val allCycles = cycles.toSet ++ selfCycles.map(node => Set(node))
+
+    val cyclesGraphs = allCycles.map(cyclicNodes =>
+      graph.filterVertices(s"id in (${cyclicNodes.mkString("'", "', '", "'")})").dropIsolatedVertices()
+    )
+
+    cyclesGraphs
+  }
+
+  val cyclesGraphs = detectCycles(g)
+  cyclesGraphs.foreach(cycle => {
+    println("Cycle graph (vertices, edges):");
+    cycle.vertices.show(false); cycle.edges.show(false)
+    val firstNode = cycle.vertices.first().getString(0)
+    val sg = subgraph(g, firstNode)
+    println("Affected subgraph (vertices, edges): ")
+    sg.vertices.show(100)
+    sg.edges.show(100)
+ })
+
+
+  //Pregel
+  println(s"=== Pregel =============================================================")
   val gx = g.toGraphX
 
 //  val numVertices = g.vertices.count()
@@ -182,5 +258,38 @@ object ProcessFormulas extends App {
 //    // dummy logic not applicable to the data in this use case
 //    msg2
 //  }
+
+//  def testPregel = {
+//    import org.apache.spark.graphx.{Graph, VertexId}
+//    import org.apache.spark.graphx.util.GraphGenerators
+//
+//    // A graph with edge attributes containing distances
+//    val graph: Graph[Long, Double] =
+//      GraphGenerators.logNormalGraph(sparkContext, numVertices = 100).mapEdges(e => e.attr.toDouble)
+//    val sourceId: VertexId = 42 // The ultimate source
+//    // Initialize the graph such that all vertices except the root have distance infinity.
+//    val initialGraph = graph.mapVertices((id, _) =>
+//      if (id == sourceId) 0.0 else Double.PositiveInfinity)
+//    val sssp = initialGraph.pregel(Double.PositiveInfinity)(
+//      (id, dist, newDist) => math.min(dist, newDist), // Vertex Program
+//      triplet => {  // Send Message
+//        if (triplet.srcAttr + triplet.attr < triplet.dstAttr) {
+//          Iterator((triplet.dstId, triplet.srcAttr + triplet.attr))
+//        } else {
+//          Iterator.empty
+//        }
+//      },
+//      (a, b) => math.min(a, b) // Merge Message
+//    )
+//    println(sssp.vertices.collect.mkString("\n"))
+//  }
+//
+//  testPregel
+//
+//  val vertices = g.vertices.select("id").collect.map(r => r.getString(0)).toList
+//  val shortestPathsDF = g.shortestPaths.landmarks(vertices).run()
+//  //debug info
+//  shortestPathsDF.show(false)
+
 
 }
