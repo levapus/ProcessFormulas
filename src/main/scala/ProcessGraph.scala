@@ -1,12 +1,9 @@
-import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.graphframes._
-import org.graphframes.lib.{AggregateMessages, Pregel}
-import org.apache.spark.graphx.{EdgeDirection, EdgeTriplet, VertexId}
 
 
-object ProcessFormulas extends App {
+object ProcessGraph extends App {
   val sparkSession = SparkSession.builder()
       .master("local[*]")
       .appName("HelloGraphFrames")
