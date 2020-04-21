@@ -12,4 +12,5 @@ libraryDependencies ++= Seq(
 
 resolvers += "SparkPackages" at "https://dl.bintray.com/spark-packages/maven"
 libraryDependencies += "graphframes" % "graphframes" % "0.8.0-spark3.0-s_2.12"
+libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
 

@@ -133,7 +133,7 @@ object ProcessFormulas extends App {
         })
         println(s"${vAttr._1} formula: $formula")
         val newFormulaValue = if (!formula.contains("item"))
-          ArithmeticParser.readExpression(formula).get() else vAttr._4
+          ExpressionParser.readExpression(formula).get else vAttr._4
 
         val new_vAttr = (vAttr._1, formula, math.max(vAttr._3, msg._1), newFormulaValue, vAttr._5 ++ msg._2)
 
